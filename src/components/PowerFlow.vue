@@ -59,12 +59,12 @@ const power = usePower()
           :icon="CloudLightningIcon"
           color="text-yellow-500"
         >
-          {{ formatter.format(power.systemIn + power.efficiencyLoss / 1000) }}
+          {{ formatter.format(power.adapterPower) }}
         </FlowItem>
 
         <CommonTooltip
           v-if="power.isCharging"
-          :content="`${$t('flow.power_loss')}: ${power.efficiencyLoss}mw`"
+          :content="`${$t('flow.power_loss')}: ${formatter.format(power.efficiencyLoss)}`"
           as-child
         >
           <Shimmer
@@ -85,7 +85,7 @@ const power = usePower()
               {{ formatter.format(power.brightnessPower || 0) }}
             </FlowItem>
 
-            <FlowItem :tooltip="$t('flow.heatpipe_power')" :icon="Cpu" color="text-indigo-500">
+            <FlowItem :tooltip="`${$t('flow.heatpipe_power')}: ${formatter.format(power.heatpipePower || 0)}w (CPU: ${formatter.format((power as any).cpuPower || 0)}w, GPU: ${formatter.format((power as any).gpuPower || 0)}w)`" :icon="Cpu" color="text-indigo-500">
               {{ formatter.format(power.heatpipePower || 0) }}
             </FlowItem>
           </div>
@@ -111,7 +111,7 @@ const power = usePower()
           <div class="h-1 cursor-pointer" />
         </Shimmer>
 
-        <FlowItem :tooltip="power.isCharging ? $t('flow.battery_in') : $t('flow.battery_out')" :icon="Battery" color="text-blue-500">
+        <FlowItem :tooltip="power.isCharging ? ((power.batteryPower || 0) <= 0.05 ? $t('flow.ac_passthrough') : $t('flow.battery_in')) : $t('flow.battery_out')" :icon="Battery" color="text-blue-500">
           {{ formatter.format(power.batteryPower) }}
         </FlowItem>
       </div>

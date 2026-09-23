@@ -13,7 +13,7 @@ use core_foundation::{
 };
 use derive_more::Add;
 use io_kit_sys::{
-    ret::kIOReturnSuccess, IOMasterPort, IORegistryEntryCreateCFProperties,
+    ret::kIOReturnSuccess, IOMasterPort, IOObjectRelease, IORegistryEntryCreateCFProperties,
     IOServiceGetMatchingService, IOServiceMatching,
 };
 use ratatui::widgets::SparklineBar;
@@ -26,6 +26,8 @@ use crate::{
 };
 
 pub mod remote;
+
+pub use crate::ffi::ioreport::{get_apple_soc_power, get_apple_soc_power_breakdown, SocPowerBreakdown};
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
@@ -41,6 +43,7 @@ pub struct NormalizedResource {
     pub max_capacity: i32,
     #[serde(default)]
     pub design_capacity: i32,
+    pub not_charging_reason: Option<i64>,
     #[serde(flatten)]
     pub data: NormalizedData,
 }
@@ -65,6 +68,15 @@ pub struct NormalizedData {
     pub adapter_watts: f32,
     pub adapter_voltage: f32,
     pub adapter_amperage: f32,
+
+    #[serde(default)]
+    pub cpu_power: f32,
+    #[serde(default)]
+    pub gpu_power: f32,
+    #[serde(default)]
+    pub battery_voltage: f32,
+    #[serde(default)]
+    pub battery_amperage: f32,
 }
 
 impl NormalizedData {
@@ -85,6 +97,10 @@ impl NormalizedData {
             adapter_watts: self.adapter_watts.max(other.adapter_watts),
             adapter_voltage: self.adapter_voltage.max(other.adapter_voltage),
             adapter_amperage: self.adapter_amperage.max(other.adapter_amperage),
+            cpu_power: self.cpu_power.max(other.cpu_power),
+            gpu_power: self.gpu_power.max(other.gpu_power),
+            battery_voltage: self.battery_voltage.max(other.battery_voltage),
+            battery_amperage: self.battery_amperage.max(other.battery_amperage),
         }
     }
 }
@@ -107,6 +123,10 @@ impl Div<f32> for NormalizedData {
             adapter_watts: self.adapter_watts / rhs,
             adapter_voltage: self.adapter_voltage / rhs,
             adapter_amperage: self.adapter_amperage / rhs,
+            cpu_power: self.cpu_power / rhs,
+            gpu_power: self.gpu_power / rhs,
+            battery_voltage: self.battery_voltage / rhs,
+            battery_amperage: self.battery_amperage / rhs,
         }
     }
 }
@@ -134,10 +154,22 @@ impl From<&IORegistry> for NormalizedResource {
                 Default::default()
             };
 
+        let time_remain = if io.time_remaining >= 65535 || io.time_remaining <= 0 {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(io.time_remaining as u64 * 60)
+        };
+        let is_charging = io.is_charging || io.adapter_details.watts.map_or(false, |w| w > 0);
+        let effective_max_capacity = io
+            .nominal_charge_capacity
+            .filter(|&c| c > 0)
+            .unwrap_or(io.apple_raw_max_capacity);
+        let brightness_power = 0.0;
+
         Self {
             is_local: false,
-            is_charging: io.is_charging,
-            time_remain: Duration::from_secs(io.time_remaining as u64 * 60),
+            is_charging,
+            time_remain,
             last_update: io.update_time,
             adapter_name: io
                 .adapter_details
@@ -145,8 +177,9 @@ impl From<&IORegistry> for NormalizedResource {
                 .clone()
                 .or_else(|| io.adapter_details.description.clone()),
             cycle_count: io.cycle_count,
-            max_capacity: io.apple_raw_max_capacity,
+            max_capacity: effective_max_capacity,
             design_capacity: io.design_capacity,
+            not_charging_reason: io.not_charging_reason,
             current_capacity: io.apple_raw_current_capacity,
             data: NormalizedData {
                 system_in,
@@ -154,59 +187,161 @@ impl From<&IORegistry> for NormalizedResource {
                 battery_power,
                 adapter_power,
                 efficiency_loss,
-                brightness_power: 0.,
+                brightness_power,
                 heatpipe_power: 0.,
                 battery_level: io.current_capacity,
-                absolute_battery_level: io.apple_raw_current_capacity as f32
-                    / io.apple_raw_max_capacity as f32
-                    * 100.,
+                absolute_battery_level: if effective_max_capacity > 0 {
+                    io.apple_raw_current_capacity as f32 / effective_max_capacity as f32 * 100.
+                } else {
+                    io.current_capacity as f32
+                },
                 temperature: io.temperature as f32 / 100.,
 
                 adapter_watts: io.adapter_details.watts.unwrap_or_default() as f32,
                 adapter_voltage: io.adapter_details.adapter_voltage.unwrap_or_default() as f32
                     / 1000.,
                 adapter_amperage: io.adapter_details.current.unwrap_or_default() as f32 / 1000.,
+                ..Default::default()
             },
         }
     }
 }
 
+pub fn get_apple_backlight_power() -> Option<f32> {
+    let name = CString::new("AppleARMBacklight").ok()?;
+    let matching = unsafe { IOServiceMatching(name.as_ptr()) };
+    let service = unsafe { IOServiceGetMatchingService(0, matching) };
+    if service == 0 {
+        return None;
+    }
+    let mut properties: CFMutableDictionaryRef = std::ptr::null_mut();
+    let ret = unsafe { IORegistryEntryCreateCFProperties(service, &mut properties, kCFAllocatorDefault, 0) };
+    unsafe { IOObjectRelease(service) };
+    if ret != kIOReturnSuccess || properties.is_null() {
+        return None;
+    }
+    let dict: CFDictionary = unsafe { CFDictionary::wrap_under_create_rule(properties) };
+    let param_key = core_foundation::string::CFString::new("IODisplayParameters");
+    let params_ref = dict.find(param_key.as_concrete_TypeRef() as *const std::ffi::c_void)?;
+    let params_dict: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(*params_ref as _) };
+
+    let b_key = core_foundation::string::CFString::new("brightness");
+    let b_ref = params_dict.find(b_key.as_concrete_TypeRef() as *const std::ffi::c_void)?;
+    let b_dict: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(*b_ref as _) };
+
+    let val_key = core_foundation::string::CFString::new("value");
+    let max_key = core_foundation::string::CFString::new("max");
+
+    let val_ref = b_dict.find(val_key.as_concrete_TypeRef() as *const std::ffi::c_void)?;
+    let max_ref = b_dict.find(max_key.as_concrete_TypeRef() as *const std::ffi::c_void)?;
+
+    let cf_val = unsafe { core_foundation::number::CFNumber::wrap_under_get_rule(*val_ref as _) };
+    let cf_max = unsafe { core_foundation::number::CFNumber::wrap_under_get_rule(*max_ref as _) };
+
+    let val = cf_val.to_i64()? as f32;
+    let max = cf_max.to_i64()? as f32;
+    if max <= 0.0 {
+        return None;
+    }
+    let ratio = (val / max).clamp(0.0, 1.0);
+    // Typical MacBook Air / Pro SDR display draws ~0.15W to ~4.0W across brightness range
+    let power = if ratio < 0.001 {
+        0.0
+    } else {
+        0.15 + 3.85 * ratio.powf(1.4)
+    };
+    Some(power)
+}
+
 impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
     fn from((io, smc): (&IORegistry, &SMCPowerData)) -> Self {
+        let is_connected_to_power = smc.is_charging()
+            || io.adapter_details.watts.map_or(false, |w| w > 0)
+            || smc.delivery_rate > 0.5;
+        let is_charging = is_connected_to_power;
+        let is_actively_charging = io.is_charging;
+        let time_remain = if is_charging {
+            if !is_actively_charging || smc.time_to_full >= 65535.0 || smc.time_to_full <= 0.0 {
+                Duration::ZERO
+            } else {
+                Duration::from_secs_f32(60.0 * smc.time_to_full)
+            }
+        } else {
+            if smc.time_to_empty >= 65535.0 || smc.time_to_empty <= 0.0 {
+                Duration::ZERO
+            } else {
+                Duration::from_secs_f32(60.0 * smc.time_to_empty)
+            }
+        };
+        let effective_max_capacity = io
+            .nominal_charge_capacity
+            .filter(|&c| c > 0)
+            .unwrap_or(io.apple_raw_max_capacity);
+        let brightness_power = if smc.brightness > 0.0 {
+            smc.brightness
+        } else {
+            get_apple_backlight_power().unwrap_or(0.0)
+        };
+        let cycle_count = if io.cycle_count > 0 {
+            io.cycle_count
+        } else if smc.cycle_count > 0 {
+            smc.cycle_count as i32
+        } else {
+            io.cycle_count
+        };
+        let battery_voltage = io.voltage as f32 / 1000.0;
+        let battery_amperage = io.amperage.abs() as f32 / 1000.0;
+        let battery_power = if is_charging {
+            if io.is_charging {
+                smc.battery_rate
+                    .max(smc.delivery_rate - smc.system_total)
+                    .max((io.amperage.max(0) as f32 * io.voltage as f32) / 1_000_000.0)
+            } else {
+                // Connected to AC but battery cell charging is paused/held: AC Passthrough
+                0.0
+            }
+        } else if smc.battery_rate > 0.05 {
+            smc.battery_rate
+        } else {
+            (io.amperage.abs() as f32 * io.voltage as f32) / 1_000_000.0
+        };
+        let temperature = if smc.temperature > 0.0 {
+            smc.temperature
+        } else {
+            io.temperature as f32 / 100.0
+        };
+
         Self {
             is_local: true,
             last_update: io.update_time,
-            is_charging: smc.is_charging(),
-            time_remain: Duration::from_secs_f32(
-                60.0 * if smc.is_charging() {
-                    smc.time_to_full
-                } else {
-                    smc.time_to_empty
-                },
-            ),
+            is_charging,
+            time_remain,
             adapter_name: io
                 .adapter_details
                 .name
                 .clone()
                 .or_else(|| io.adapter_details.description.clone()),
-            cycle_count: io.cycle_count,
-            max_capacity: io.apple_raw_max_capacity,
+            cycle_count,
+            max_capacity: effective_max_capacity,
             design_capacity: io.design_capacity,
+            not_charging_reason: io.not_charging_reason,
             current_capacity: io.apple_raw_current_capacity,
             data: NormalizedData {
                 system_in: smc.delivery_rate,
                 system_load: smc.system_total,
-                battery_power: smc.battery_rate.max(smc.delivery_rate - smc.system_total),
+                battery_power,
                 efficiency_loss: io
                     .ptd()
                     .map_or(0.0, |d| d.adapter_efficiency_loss as f32 / 1000.),
-                brightness_power: smc.brightness,
+                brightness_power,
                 heatpipe_power: smc.heatpipe,
                 battery_level: io.current_capacity,
-                absolute_battery_level: io.apple_raw_current_capacity as f32
-                    / io.apple_raw_max_capacity as f32
-                    * 100.,
-                temperature: smc.temperature,
+                absolute_battery_level: if effective_max_capacity > 0 {
+                    io.apple_raw_current_capacity as f32 / effective_max_capacity as f32 * 100.
+                } else {
+                    io.current_capacity as f32
+                },
+                temperature,
                 adapter_power: smc.delivery_rate
                     + io.ptd()
                         .map_or(0.0, |d| d.adapter_efficiency_loss as f32 / 1000.),
@@ -215,6 +350,11 @@ impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
                 adapter_voltage: io.adapter_details.adapter_voltage.unwrap_or_default() as f32
                     / 1000.,
                 adapter_amperage: io.adapter_details.current.unwrap_or_default() as f32 / 1000.,
+
+                cpu_power: smc.cpu_power,
+                gpu_power: smc.gpu_power,
+                battery_voltage,
+                battery_amperage,
             },
         }
     }
@@ -229,11 +369,14 @@ pub fn get_mac_ioreg_dict() -> anyhow::Result<CFDictionary> {
     let matching_dict = unsafe { IOServiceMatching(name.as_ptr()) };
 
     let result = unsafe { IOServiceGetMatchingService(master_port, matching_dict) };
+    if result == 0 {
+        bail!("AppleSmartBattery service not found");
+    }
 
     let mut properties: CFMutableDictionaryRef = unsafe { mem::zeroed() };
-    if unsafe { IORegistryEntryCreateCFProperties(result, &mut properties, kCFAllocatorDefault, 0) }
-        != kIOReturnSuccess
-    {
+    let ret = unsafe { IORegistryEntryCreateCFProperties(result, &mut properties, kCFAllocatorDefault, 0) };
+    unsafe { IOObjectRelease(result) };
+    if ret != kIOReturnSuccess || properties.is_null() {
         bail!("could not get properties");
     }
 
@@ -242,7 +385,8 @@ pub fn get_mac_ioreg_dict() -> anyhow::Result<CFDictionary> {
 
 pub fn get_mac_ioreg() -> anyhow::Result<IORegistry> {
     let dic = get_mac_ioreg_dict()?;
-    unsafe { mem::transmute(dict_into::<repr::IORegistry>(dic)) }
+    let r: repr::IORegistry = dict_into(dic)?;
+    Ok(r.into())
 }
 
 #[derive(Debug)]

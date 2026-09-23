@@ -71,9 +71,7 @@ const power = usePower()
         </div>
         <Skeleton v-else class="w-12 h-8" />
         <p class="flex gap-2 text-xs text-muted-foreground">
-          Max Capacity: <span v-if="!power.isLoading">{{
-            power.maxCapacity
-          }}mAh</span>
+          Max Capacity: <span v-if="!power.isLoading">{{ power.maxCapacity }}mAh{{ (power as any).batteryVoltage ? ` · ${(power as any).batteryVoltage.toFixed(1)}V` : '' }}</span>
           <Skeleton v-else class="w-12 h-4" />
         </p>
       </CardContent>

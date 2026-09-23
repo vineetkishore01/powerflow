@@ -20,12 +20,17 @@ status:
   to_full: to full
   to_empty: to empty
   fully_charged: Fully Charged
+  not_charging: Not Charging
+  connected: Connected to Power
+  calculating: Calculating...
   battery_in: Battery In
   power_loss: Power Loss
   screen_power: Screen
   heatpipe_power: SoC
   system_total: System
   system_other: Other
+  charging_limit_80: 80% Limit Active
+  ac_passthrough: AC Passthrough
 
 flow:
   screen_power: Screen Power
@@ -36,6 +41,9 @@ flow:
   battery_out: Battery Out
   power_loss: Power Loss
   adapter_power: Adapter Power
+  cpu_power: CPU Power
+  gpu_power: GPU Power
+  ac_passthrough: Battery Idle (AC Passthrough)
 
 settings:
   appearance: Appearance
@@ -70,7 +78,7 @@ settings:
 
 time:
   minute: minute|minute|minutes
-  hour: minute|hour|hours
+  hour: hour|hour|hours
 
 time_ago_options:
   day_future: in 0 days|tomorrow|in {n} days

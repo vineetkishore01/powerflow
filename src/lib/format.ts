@@ -4,9 +4,12 @@ import { type FormatDistanceToken, formatDistanceToNow, type Locale } from 'date
 import { enUS, zhCN } from 'date-fns/locale'
 
 export function formatChargingDuration(seconds: number, t: ReturnType<typeof useI18n>['t']) {
+  if (seconds <= 0 || seconds >= 86400 * 30) {
+    return ''
+  }
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
-  return hours > 0 ? `${hours}${t('time.hour', hours)} ${minutes}${t('time.minute', minutes)}` : `${minutes}${t('time.minute', minutes)}`
+  return hours > 0 ? `${hours} ${t('time.hour', hours)} ${minutes} ${t('time.minute', minutes)}` : `${minutes} ${t('time.minute', minutes)}`
 }
 
 export const localeMap = {

@@ -1,6 +1,6 @@
 [package]
 name = "tpower"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 
 [features]
@@ -35,3 +35,7 @@ derive_more = { version = "1.0.0", features = [
   "add",
   "mul"
 ] }
+
+[dev-dependencies]
+serde_json = "1.0"
+

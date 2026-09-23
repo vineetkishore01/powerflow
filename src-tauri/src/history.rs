@@ -19,7 +19,6 @@ use crate::{
 
 struct ChargingHistoryStage {
     data: NormalizedResource,
-    raw: String,
 }
 
 #[derive(Serialize, Deserialize, Type)]
@@ -40,6 +39,7 @@ pub struct ChargingHistoryDetail {
     avg: NormalizedData,
     peak: NormalizedData,
     curve: Vec<NormalizedResource>,
+    #[serde(default)]
     raw: Vec<String>,
 }
 
@@ -88,7 +88,7 @@ fn summrize_history(
     let peak = staged.iter().fold(NormalizedData::default(), |acc, cur| {
         acc.max_with(&cur.data)
     });
-    let (curve, raw) = staged.into_iter().map(|s| (s.data, s.raw)).unzip();
+    let curve = staged.into_iter().map(|s| s.data).collect();
 
     Some(ChargingHistory {
         is_remote: matches!(typ, DeviceType::Remote(_)),
@@ -106,7 +106,7 @@ fn summrize_history(
             avg,
             peak,
             curve,
-            raw,
+            raw: Vec::new(),
         },
     })
 }
@@ -131,8 +131,10 @@ fn spawn_history_recorder(
                 || (!staged.is_empty() && full_charged)
             {
                 let taked = mem::take(staged);
-                // filter out short history
-                if taked.len() <= 2 {
+                // filter out short history or sessions where battery level didn't increase
+                let level_diff = taked.last().map(|l| l.data.battery_level).unwrap_or(0)
+                    - taked.first().map(|f| f.data.battery_level).unwrap_or(0);
+                if taked.len() <= 2 || level_diff <= 0 {
                     continue;
                 }
 
@@ -165,7 +167,6 @@ fn spawn_history_recorder(
             {
                 log::info!("staged: {:#?}", staged.len());
                 staged.push(ChargingHistoryStage {
-                    raw: serde_json::to_string(&data).unwrap(),
                     data,
                 });
             }

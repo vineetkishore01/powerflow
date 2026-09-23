@@ -22,10 +22,11 @@ pub enum SenderMessage {
 
 pub fn status_bar_text(
     smc: &SMCPowerData,
+    is_charging: bool,
     status_bar_item: &StatusBarItem,
     show_charging: bool,
 ) -> f32 {
-    if smc.is_charging() && show_charging {
+    if is_charging && show_charging {
         return smc.delivery_rate;
     }
     match status_bar_item {
@@ -42,10 +43,11 @@ impl PowerUpdatedEvent {
 
     pub fn new_with(
         smc: &SMCPowerData,
+        is_charging: bool,
         status_bar_item: &StatusBarItem,
         show_charging: bool,
     ) -> Self {
-        Self::new(status_bar_text(smc, status_bar_item, show_charging))
+        Self::new(status_bar_text(smc, is_charging, status_bar_item, show_charging))
     }
 }
 
@@ -53,6 +55,16 @@ impl PowerUpdatedEvent {
 #[serde(rename_all = "camelCase")]
 pub struct PowerTickEvent {
     pub data: NormalizedResource,
+}
+
+fn read_local_ioreg() -> tpower::de::IORegistry {
+    match get_mac_ioreg() {
+        Ok(io) => io,
+        Err(e) => {
+            log::warn!("Failed to read IORegistry: {:?}", e);
+            Default::default()
+        }
+    }
 }
 
 pub fn start_sender<R: Runtime>(
@@ -81,21 +93,25 @@ pub fn start_sender<R: Runtime>(
             select! {
                 _ = timer.tick() => {
                     let smc = smc_conn.read_sensor();
-                    PowerUpdatedEvent::new_with(&smc, &status_bar_item, show_charging)
+                    let io = read_local_ioreg();
+                    let resource: NormalizedResource = (&io, &smc).into();
+                    PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
                         .emit(&app)
                         .unwrap();
                     PowerTickEvent {
-                        data: (&get_mac_ioreg().unwrap(), &smc).into(),
+                        data: resource,
                     }.emit(&app).unwrap();
                 }
                 Some(msg) = rx.recv() => match msg {
                     SenderMessage::ImmediateSend => {
                         let smc = smc_conn.read_sensor();
-                        PowerUpdatedEvent::new_with(&smc, &status_bar_item, show_charging)
+                        let io = read_local_ioreg();
+                        let resource: NormalizedResource = (&io, &smc).into();
+                        PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
                             .emit(&app)
                             .unwrap();
                         PowerTickEvent {
-                            data:  (&get_mac_ioreg().unwrap(), &smc).into()
+                            data: resource,
                         }.emit(&app).unwrap();
                     },
                     SenderMessage::ChangeInterval(interval) => {
@@ -108,13 +124,19 @@ pub fn start_sender<R: Runtime>(
                     },
                     SenderMessage::ChangeStatusBarItem(item) => {
                         status_bar_item = item;
-                        PowerUpdatedEvent::new_with(&smc_conn.read_sensor(), &status_bar_item, show_charging)
+                        let smc = smc_conn.read_sensor();
+                        let io = read_local_ioreg();
+                        let resource: NormalizedResource = (&io, &smc).into();
+                        PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
                             .emit(&app)
                             .unwrap();
                     },
                     SenderMessage::StatusBarShowCharging(show) => {
                         show_charging = show;
-                        PowerUpdatedEvent::new_with(&smc_conn.read_sensor(), &status_bar_item, show_charging)
+                        let smc = smc_conn.read_sensor();
+                        let io = read_local_ioreg();
+                        let resource: NormalizedResource = (&io, &smc).into();
+                        PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
                             .emit(&app)
                             .unwrap();
                     }

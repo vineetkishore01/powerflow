@@ -31,11 +31,17 @@ const { t } = useI18n()
         class="text-sm font-medium truncate"
         :class="power.isCharging ? 'text-blue-500' : 'text-muted-foreground'"
       >
-        <span v-if="power.isCharging && power.batteryLevel === 100">{{ $t('status.fully_charged') }}</span>
-        <template v-else>
+        <span v-if="power.isCharging && power.batteryLevel >= 99.5">{{ $t('status.fully_charged') }}</span>
+        <template v-else-if="power.isCharging && power.timeRemain.secs > 0">
           <span class="font-semibold mr-1">{{ formatChargingDuration(power.timeRemain.secs, t) }}</span>
-          <span>{{ power.isCharging ? $t('status.to_full') : $t('status.to_empty') }}</span>
+          <span>{{ $t('status.to_full') }}</span>
         </template>
+        <span v-else-if="power.isCharging">{{ (power as any).notChargingReason === 16777216 ? $t('status.charging_limit_80') : $t('status.connected') }}</span>
+        <template v-else-if="power.timeRemain.secs > 0">
+          <span class="font-semibold mr-1">{{ formatChargingDuration(power.timeRemain.secs, t) }}</span>
+          <span>{{ $t('status.to_empty') }}</span>
+        </template>
+        <span v-else>{{ $t('status.calculating') }}</span>
       </div>
       <Skeleton v-else class="w-32 h-5" />
     </div>

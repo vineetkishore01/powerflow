@@ -15,10 +15,11 @@ const KERNEL_INDEX_SMC: i32 = 2;
 // SMC CMD values
 const CMD_READ_BYTES: u8 = 5;
 const CMD_WRITE_BYTES: u8 = 6;
+const CMD_READ_KEYBYINDEX: u8 = 8;
 const CMD_READ_KEYINFO: u8 = 9;
 
-const SMC_SENSORS: [&str; 11] = [
-    "PPBR", "PDTR", "PSTR", "PHPC", "PDBR", "B0FC", "SBAR", "CHCC", "B0TE", "B0TF", "TB0T",
+const SMC_SENSORS: [&str; 12] = [
+    "PPBR", "PDTR", "PSTR", "PHPC", "PDBR", "B0FC", "SBAR", "CHCC", "B0TE", "B0TF", "TB0T", "B0CT",
 ];
 
 pub trait SMCReadSensor {
@@ -27,7 +28,7 @@ pub trait SMCReadSensor {
 
 impl SMCReadSensor for SMCConnection {
     fn read_sensor(&mut self) -> SMCPowerData {
-        SMC_SENSORS
+        let mut data = SMC_SENSORS
             .into_iter()
             .fold(SMCPowerData::default(), |mut acc, key| {
                 if let Ok(Some(val)) = self.read_key(key).map(|v| v.value()) {
@@ -44,11 +45,25 @@ impl SMCReadSensor for SMCConnection {
                         "B0TE" => acc.time_to_empty = val,
                         "B0TF" => acc.time_to_full = val,
                         "TB0T" => acc.temperature = val,
+                        "B0CT" => acc.cycle_count = val as u16,
                         _ => (),
                     }
                 }
                 acc
-            })
+            });
+        if data.brightness <= f32::EPSILON {
+            if let Some(p) = crate::provider::get_apple_backlight_power() {
+                data.brightness = p;
+            }
+        }
+        if let Some(b) = crate::ffi::ioreport::get_apple_soc_power_breakdown() {
+            if data.heatpipe <= 0.05 {
+                data.heatpipe = b.total;
+            }
+            data.cpu_power = b.cpu;
+            data.gpu_power = b.gpu;
+        }
+        data
     }
 }
 
@@ -67,6 +82,12 @@ pub struct SMCPowerData {
     pub time_to_empty: f32,
     pub time_to_full: f32,
     pub temperature: f32,
+    #[serde(default)]
+    pub cycle_count: u16,
+    #[serde(default)]
+    pub cpu_power: f32,
+    #[serde(default)]
+    pub gpu_power: f32,
 }
 
 impl SMCPowerData {
@@ -216,7 +237,7 @@ pub struct SMCVal {
 }
 
 impl SMCVal {
-    fn value(&self) -> Option<f32> {
+    pub fn value(&self) -> Option<f32> {
         match SMCType::from_str(self.data_type_str()) {
             Ok(SMCType::FLT) => {
                 let mut buf = [0u8; 4];
@@ -243,11 +264,7 @@ impl SMCVal {
     }
 
     fn data_type_str(&self) -> &str {
-        match str::from_utf8(&self.data_type) {
-            Ok(s) => s,
-            Err(e) => panic!("{}", e),
-        }
-        .trim()
+        str::from_utf8(&self.data_type).unwrap_or("").trim()
     }
 }
 
@@ -377,6 +394,17 @@ impl SMCConnection {
 
         self.call(KERNEL_INDEX_SMC, &input)?;
         Ok(())
+    }
+
+    pub fn read_key_by_index(&self, index: u32) -> Result<String, kern_return_t> {
+        let input = SMCKeyData {
+            data8: CMD_READ_KEYBYINDEX,
+            data32: index,
+            ..Default::default()
+        };
+        let output = self.call(KERNEL_INDEX_SMC, &input)?;
+        let bytes = u32_to_bytes(output.key);
+        Ok(String::from_utf8_lossy(&bytes).to_string())
     }
 
     fn call(&self, index: i32, input: &SMCKeyData) -> Result<SMCKeyData, kern_return_t> {

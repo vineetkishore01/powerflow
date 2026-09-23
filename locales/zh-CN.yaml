@@ -19,12 +19,17 @@ status:
   to_full: 充满
   to_empty: 耗尽
   fully_charged: 已充满
+  not_charging: 未在充电
+  connected: 已连接电源
+  calculating: 计算中...
   battery_in: 电池输入
   power_loss: 损耗
   screen_power: 屏幕
   heatpipe_power: SoC
   system_total: 整机
   system_other: 其他
+  charging_limit_80: 80% 充电上限已启用
+  ac_passthrough: 交流直供电
 flow:
   screen_power: 屏幕功耗
   heatpipe_power: SoC功耗
@@ -34,6 +39,9 @@ flow:
   battery_out: 电池放电功率
   power_loss: 损耗
   adapter_power: 适配器功率
+  cpu_power: CPU功耗
+  gpu_power: GPU功耗
+  ac_passthrough: 电池待机 (交流直供电)
 settings:
   appearance: 外观
   theme: 主题
@@ -80,19 +88,19 @@ time_ago_options:
   month_past: 现在|上个月|{n} 个月前
   second_future: 刚刚|{n} 秒后|{n} 秒后
   second_past: 刚刚|{n} 秒前|{n} 秒前
-  short_day_future: '{n} 天前'
+  short_day_future: '{n} 天后'
   short_day_past: '{n} 天前'
-  short_hour_future: '{n} 小时前'
+  short_hour_future: '{n} 小时后'
   short_hour_past: '{n} 小时前'
-  short_minute_future: '{n} 分钟前'
+  short_minute_future: '{n} 分钟后'
   short_minute_past: '{n} 分钟前'
-  short_month_future: '{n} 个月前'
+  short_month_future: '{n} 个月后'
   short_month_past: '{n} 个月前'
-  short_second_future: '{n} 秒前'
+  short_second_future: '{n} 秒后'
   short_second_past: '{n} 秒前'
-  short_week_future: '{n} 周前'
+  short_week_future: '{n} 周后'
   short_week_past: '{n} 周前'
-  short_year_future: '{n} 年前'
+  short_year_future: '{n} 年后'
   short_year_past: '{n} 年前'
   week_future: 现在|下周|{n} 周后
   week_past: 现在|上周|{n} 周前

@@ -6,6 +6,7 @@ use core_foundation::{
 };
 use libc::{c_char, c_void};
 
+pub mod ioreport;
 pub mod smc;
 pub mod wrapper;
 
