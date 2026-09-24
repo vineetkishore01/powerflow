@@ -3,8 +3,8 @@ use std::{
     ffi::CString,
     mem,
     ops::{Deref, Div},
-    sync::OnceLock,
-    time::Duration,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 use anyhow::bail;
@@ -45,6 +45,8 @@ pub struct NormalizedResource {
     #[serde(default)]
     pub design_capacity: i32,
     pub not_charging_reason: Option<i64>,
+    #[serde(default)]
+    pub charge_limit: Option<u8>,
     #[serde(flatten)]
     pub data: NormalizedData,
 }
@@ -211,6 +213,7 @@ impl From<&IORegistry> for NormalizedResource {
             max_capacity,
             design_capacity,
             not_charging_reason: io.not_charging_reason,
+            charge_limit: None,
             current_capacity,
             data: NormalizedData {
                 system_in,
@@ -392,15 +395,97 @@ fn get_ioreg_backlight_power() -> Option<f32> {
     Some(power)
 }
 
+/// Query the battery charge limit (e.g. 80%) configured in macOS Sequoia or third-party tools.
+pub fn get_battery_charge_limit() -> Option<u8> {
+    static CACHED_LIMIT: Mutex<(Option<u8>, Option<Instant>)> = Mutex::new((None, None));
+
+    if let Ok(guard) = CACHED_LIMIT.lock() {
+        if let (val, Some(t)) = *guard {
+            if t.elapsed() < Duration::from_secs(5) {
+                return val;
+            }
+        }
+    }
+
+    let mut detected_limit = None;
+
+    // Check pmset -g battlimit
+    if let Ok(output) = std::process::Command::new("/usr/bin/pmset")
+        .args(["-g", "battlimit"])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut terminated = false;
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("Terminated") {
+                    terminated = trimmed.contains("1");
+                } else if trimmed.starts_with("chargeSocLimitSoc") {
+                    if let Some(val_str) = trimmed.split('=').nth(1) {
+                        let val = val_str.trim().trim_end_matches(';').trim();
+                        if let Ok(num) = val.parse::<u8>() {
+                            if !terminated && num > 0 && num < 100 {
+                                detected_limit = Some(num);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(mut guard) = CACHED_LIMIT.lock() {
+        *guard = (detected_limit, Some(Instant::now()));
+    }
+
+    detected_limit
+}
+
 impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
     fn from((io, smc): (&IORegistry, &SMCPowerData)) -> Self {
+        let (max_capacity, current_capacity, design_capacity) = real_capacity_from(io);
+        let charge_limit = get_battery_charge_limit().or_else(|| {
+            if io.not_charging_reason == Some(16777216) {
+                Some(80)
+            } else {
+                None
+            }
+        });
+
+        let current_pct = if max_capacity > 0 {
+            current_capacity as f32 / max_capacity as f32 * 100.0
+        } else {
+            io.current_capacity as f32
+        };
+
         let is_connected_to_power = smc.is_charging()
             || io.adapter_details.watts.map_or(false, |w| w > 0)
             || smc.delivery_rate > 0.5;
         let is_charging = is_connected_to_power;
         let is_actively_charging = io.is_charging;
         let time_remain = if is_charging {
-            if !is_actively_charging || smc.time_to_full >= 65535.0 || smc.time_to_full <= 0.0 {
+            if let Some(limit) = charge_limit {
+                let limit_f32 = limit as f32;
+                if current_pct >= limit_f32 - 0.5 || !is_actively_charging {
+                    Duration::ZERO
+                } else {
+                    let remaining_pct = (limit_f32 - current_pct).max(0.0);
+                    let full_pct = (100.0 - current_pct).max(1.0);
+                    let current_ma = io.amperage.max(0) as f32;
+                    let remaining_mah = (remaining_pct / 100.0) * max_capacity as f32;
+                    if current_ma > 100.0 && remaining_mah > 0.0 {
+                        let hours = remaining_mah / current_ma;
+                        Duration::from_secs_f32((hours * 3600.0).clamp(60.0, 86400.0))
+                    } else if smc.time_to_full > 0.0 && smc.time_to_full < 65535.0 {
+                        let scaled_mins = (smc.time_to_full * (remaining_pct / full_pct) * 0.7).max(1.0);
+                        Duration::from_secs_f32(scaled_mins * 60.0)
+                    } else {
+                        Duration::ZERO
+                    }
+                }
+            } else if !is_actively_charging || smc.time_to_full >= 65535.0 || smc.time_to_full <= 0.0 {
                 Duration::ZERO
             } else {
                 Duration::from_secs_f32(60.0 * smc.time_to_full)
@@ -412,7 +497,6 @@ impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
                 Duration::from_secs_f32(60.0 * smc.time_to_empty)
             }
         };
-        let (max_capacity, current_capacity, design_capacity) = real_capacity_from(io);
         let brightness_power = if smc.brightness > 0.0 {
             smc.brightness
         } else {
@@ -461,6 +545,7 @@ impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
             max_capacity,
             design_capacity,
             not_charging_reason: io.not_charging_reason,
+            charge_limit,
             current_capacity,
             data: NormalizedData {
                 system_in: smc.delivery_rate,

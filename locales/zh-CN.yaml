@@ -17,6 +17,7 @@ status:
   on_battery: 电池供电
   system_power: 系统功率
   to_full: 充满
+  to_limit: 充至 {limit}%
   to_empty: 耗尽
   fully_charged: 已充满
   not_charging: 未在充电

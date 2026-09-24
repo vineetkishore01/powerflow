@@ -18,6 +18,7 @@ status:
   charging_power: Charging Power
   system_power: System Power
   to_full: to full
+  to_limit: to {limit}%
   to_empty: to empty
   fully_charged: Fully Charged
   not_charging: Not Charging
