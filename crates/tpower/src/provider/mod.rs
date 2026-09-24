@@ -3,6 +3,7 @@ use std::{
     ffi::CString,
     mem,
     ops::{Deref, Div},
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -237,7 +238,115 @@ impl From<&IORegistry> for NormalizedResource {
     }
 }
 
+type CGDirectDisplayID = u32;
+type DisplayServicesBrightnessFn = unsafe extern "C" fn(CGDirectDisplayID, *mut f32) -> i32;
+
+/// Function pointers resolved at runtime from DisplayServices / CoreGraphics via `dlopen`,
+/// so no hard link-time dependency on the private DisplayServices framework is needed.
+struct DisplayFns {
+    get_linear_brightness: Option<DisplayServicesBrightnessFn>,
+    get_brightness: Option<DisplayServicesBrightnessFn>,
+    main_display_id: unsafe extern "C" fn() -> CGDirectDisplayID,
+    display_is_asleep: unsafe extern "C" fn(CGDirectDisplayID) -> i32,
+    display_is_builtin: unsafe extern "C" fn(CGDirectDisplayID) -> i32,
+    get_active_display_list:
+        unsafe extern "C" fn(u32, *mut CGDirectDisplayID, *mut u32) -> i32,
+}
+
+unsafe fn dl_open(path: &str) -> Option<*mut libc::c_void> {
+    let path = CString::new(path).ok()?;
+    let handle = libc::dlopen(path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+    (!handle.is_null()).then_some(handle)
+}
+
+unsafe fn dl_sym<T: Copy>(handle: *mut libc::c_void, name: &str) -> Option<T> {
+    debug_assert_eq!(mem::size_of::<T>(), mem::size_of::<*mut libc::c_void>());
+    let name = CString::new(name).ok()?;
+    let sym = libc::dlsym(handle, name.as_ptr());
+    (!sym.is_null()).then(|| mem::transmute_copy::<*mut libc::c_void, T>(&sym))
+}
+
+fn display_fns() -> Option<&'static DisplayFns> {
+    static FNS: OnceLock<Option<DisplayFns>> = OnceLock::new();
+    FNS.get_or_init(|| unsafe {
+        // Handles are intentionally never closed: the symbols live for the whole process.
+        let ds = dl_open("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices")?;
+        let cg = dl_open("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")?;
+        let get_linear_brightness = dl_sym(ds, "DisplayServicesGetLinearBrightness");
+        let get_brightness = dl_sym(ds, "DisplayServicesGetBrightness");
+        if get_linear_brightness.is_none() && get_brightness.is_none() {
+            return None;
+        }
+        Some(DisplayFns {
+            get_linear_brightness,
+            get_brightness,
+            main_display_id: dl_sym(cg, "CGMainDisplayID")?,
+            display_is_asleep: dl_sym(cg, "CGDisplayIsAsleep")?,
+            display_is_builtin: dl_sym(cg, "CGDisplayIsBuiltin")?,
+            get_active_display_list: dl_sym(cg, "CGGetActiveDisplayList")?,
+        })
+    })
+    .as_ref()
+}
+
+/// The active built-in panel, falling back to the main display.
+fn builtin_display_id(fns: &DisplayFns) -> CGDirectDisplayID {
+    let mut displays = [0 as CGDirectDisplayID; 16];
+    let mut count = 0u32;
+    let ret = unsafe {
+        (fns.get_active_display_list)(displays.len() as u32, displays.as_mut_ptr(), &mut count)
+    };
+    if ret == 0 {
+        let count = (count as usize).min(displays.len());
+        if let Some(&id) = displays[..count]
+            .iter()
+            .find(|&&id| unsafe { (fns.display_is_builtin)(id) } != 0)
+        {
+            return id;
+        }
+    }
+    unsafe { (fns.main_display_id)() }
+}
+
+/// Live linear backlight duty cycle (0.0..=1.0) of the built-in display,
+/// or `None` if DisplayServices is unavailable.
+pub fn get_display_linear_brightness() -> Option<f32> {
+    let fns = display_fns()?;
+    read_linear_brightness(fns, builtin_display_id(fns))
+}
+
+fn read_linear_brightness(fns: &DisplayFns, display: CGDirectDisplayID) -> Option<f32> {
+    let read = |f: DisplayServicesBrightnessFn| {
+        let mut val = 0f32;
+        (unsafe { f(display, &mut val) } == 0 && val.is_finite()).then_some(val)
+    };
+    let linear = fns
+        .get_linear_brightness
+        .and_then(read)
+        // Perceptual slider value -> approximate linear duty cycle
+        .or_else(|| fns.get_brightness.and_then(read).map(|v| v.powi(2)))?;
+    Some(linear.clamp(0.0, 1.0))
+}
+
+/// Backlight power estimated from live DisplayServices brightness (0.0 W while asleep).
+pub fn get_live_backlight_power() -> Option<f32> {
+    let fns = display_fns()?;
+    let display = builtin_display_id(fns);
+    if unsafe { (fns.display_is_asleep)(display) } != 0 {
+        return Some(0.0);
+    }
+    let linear = read_linear_brightness(fns, display)?;
+    // Typical MacBook Air / Pro SDR display: ~0.15W panel electronics + ~3.85W peak backlight
+    Some(0.15 + 3.85 * linear)
+}
+
 pub fn get_apple_backlight_power() -> Option<f32> {
+    get_live_backlight_power().or_else(get_ioreg_backlight_power)
+}
+
+/// Fallback: AppleARMBacklight IORegistry brightness. Note this value is static on
+/// Apple Silicon, so it is only used when DisplayServices cannot be loaded.
+fn get_ioreg_backlight_power() -> Option<f32> {
     let name = CString::new("AppleARMBacklight").ok()?;
     let matching = unsafe { IOServiceMatching(name.as_ptr()) };
     let service = unsafe { IOServiceGetMatchingService(0, matching) };

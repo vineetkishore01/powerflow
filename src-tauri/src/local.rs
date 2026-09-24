@@ -37,8 +37,8 @@ pub fn status_bar_text(
 }
 
 impl PowerUpdatedEvent {
-    pub fn new(value: f32) -> Self {
-        Self(format!("{:.1} w", value))
+    pub fn new(value: f32, is_charging: bool) -> Self {
+        Self(format!("{} {:.1} w", if is_charging { "↑" } else { "↓" }, value))
     }
 
     pub fn new_with(
@@ -47,7 +47,10 @@ impl PowerUpdatedEvent {
         status_bar_item: &StatusBarItem,
         show_charging: bool,
     ) -> Self {
-        Self::new(status_bar_text(smc, is_charging, status_bar_item, show_charging))
+        Self::new(
+            status_bar_text(smc, is_charging, status_bar_item, show_charging),
+            is_charging,
+        )
     }
 }
 
