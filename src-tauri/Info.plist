@@ -3,6 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Powerflow displays battery status for your connected Bluetooth accessories and earphones.</string>
+    <string>Powerflow displays battery status for your Bluetooth accessories, AirPods, and nearby iPhones and iPads.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Powerflow finds your paired iPhone and iPad on the local network to show their battery status.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_apple-mobdev2._tcp</string>
+    </array>
 </dict>
 </plist>

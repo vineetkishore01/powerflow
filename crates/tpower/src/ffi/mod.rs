@@ -1,8 +1,8 @@
 use std::marker::{PhantomData, PhantomPinned};
 
 use core_foundation::{
-    array::CFArrayRef, dictionary::CFDictionaryRef, propertylist::CFPropertyListFormat,
-    string::CFStringRef,
+    array::CFArrayRef, base::CFTypeRef, dictionary::CFDictionaryRef,
+    propertylist::CFPropertyListFormat, string::CFStringRef,
 };
 use libc::{c_char, c_void};
 
@@ -61,11 +61,26 @@ pub enum Action {
     Paired = 4,
 }
 
+impl Action {
+    /// The callback's action field comes straight from MobileDevice, so map it
+    /// explicitly instead of trusting it to be a valid discriminant.
+    pub const fn from_raw(raw: i32) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Attached),
+            2 => Some(Self::Detached),
+            3 => Some(Self::NotificationStopped),
+            4 => Some(Self::Paired),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct AMDeviceNotificationCallbackInfo {
     pub device: AMDeviceRef,
-    pub action: Action,
+    /// Raw [`Action`]; decode with [`Action::from_raw`].
+    pub action: i32,
     pub subscription: *mut AMDeviceNotification,
 }
 
@@ -101,32 +116,70 @@ pub enum InterfaceType {
     WiFi = 2,
 }
 
+impl InterfaceType {
+    pub const fn from_raw(raw: i32) -> Self {
+        match raw {
+            1 => Self::USB,
+            2 => Self::WiFi,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Keys accepted in the `options` dictionary of
+/// [`AMDeviceNotificationSubscribeWithOptions`] (values are `CFBoolean`).
+pub mod notification_option {
+    /// Receive devices reported by usbmuxd: USB devices and, if usbmuxd has a
+    /// pairing record with Wi-Fi sync enabled, network devices.
+    pub const ENABLE_USBMUX: &str = "NotificationOptionEnableUSBMux";
+    /// Have MobileDevice itself browse Bonjour (`_apple-mobdev2._tcp`) for
+    /// network devices that this host holds a pairing record for.
+    pub const SEARCH_FOR_PAIRED_DEVICES: &str = "NotificationOptionSearchForPairedDevices";
+    /// iOS 17+ CoreDevice/RemoteXPC transport (used by Xcode 15+).
+    pub const ENABLE_REMOTE_XPC: &str = "NotificationOptionEnableRemoteXPC";
+}
+
 #[link(name = "MobileDevice", kind = "framework")]
 extern "C" {
     pub fn AMDCreateDeviceList() -> CFArrayRef;
+    /// Tail-calls [`AMDeviceNotificationSubscribeWithOptions`] with the same
+    /// arguments and `options = NULL`, so `unknown0`/`unknown1` are the minimum
+    /// interface speed and connection type.
     pub fn AMDeviceNotificationSubscribe(
         callback: AMDeviceNotificationCallback,
         unknown0: i32,
         unknown1: i32,
         context: *mut c_void,
-        notification: *mut AMDeviceNotification,
-    );
+        notification: *mut *mut AMDeviceNotification,
+    ) -> i32;
     pub fn AMDeviceNotificationUnsubscribe(notification: *mut c_void);
+    /// `connection_type`: 0 = any, 1 = USB only, 2 = network only; values >= 3
+    /// are rejected ("Invalid connection type requested."). `ref_out` must be
+    /// non-null. See [`notification_option`] for `options` keys.
     pub fn AMDeviceNotificationSubscribeWithOptions(
         callback: AMDeviceNotificationCallback,
         minimum_interface_speed: i32,
         connection_type: i32,
         context: *mut c_void,
-        ref_out: *mut c_void,
+        ref_out: *mut *mut AMDeviceNotification,
         options: CFDictionaryRef,
-    );
+    ) -> i32;
+    pub fn AMDeviceRetain(device: AMDeviceRef) -> AMDeviceRef;
+    pub fn AMDeviceRelease(device: AMDeviceRef);
     pub fn AMDeviceCopyDeviceIdentifier(device: AMDeviceRef) -> CFStringRef;
     pub fn AMDeviceCopyValue(
         device: AMDeviceRef,
         domain: CFStringRef,
         key: CFStringRef,
     ) -> *const c_void;
-    pub fn AMDeviceGetInterfaceType(device: AMDeviceRef) -> InterfaceType;
+    pub fn AMDeviceSetValue(
+        device: AMDeviceRef,
+        domain: CFStringRef,
+        key: CFStringRef,
+        value: CFTypeRef,
+    ) -> i32;
+    /// Raw interface type; decode with [`InterfaceType::from_raw`].
+    pub fn AMDeviceGetInterfaceType(device: AMDeviceRef) -> i32;
     pub fn AMDeviceConnect(device: AMDeviceRef) -> i32;
     pub fn AMDeviceDisconnect(device: AMDeviceRef) -> i32;
     pub fn AMDeviceIsPaired(device: AMDeviceRef) -> i32;
@@ -141,6 +194,7 @@ extern "C" {
         service_connection: *const AMDServiceConnectionRef,
     ) -> i32;
     pub fn AMDServiceConnectionInvalidate(connection: AMDServiceConnectionRef);
+    pub fn AMDServiceConnectionGetSocket(connection: AMDServiceConnectionRef) -> i32;
     pub fn AMDServiceConnectionSendMessage(
         connection: AMDServiceConnectionRef,
         message: CFDictionaryRef,
@@ -148,7 +202,7 @@ extern "C" {
     ) -> i32;
     pub fn AMDServiceConnectionReceiveMessage(
         connection: AMDServiceConnectionRef,
-        response: *const CFDictionaryRef,
+        response: *mut CFDictionaryRef,
         format: *const CFPropertyListFormat,
         unknown0: *const c_void,
         unknown1: *const c_void,

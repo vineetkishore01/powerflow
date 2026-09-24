@@ -70,6 +70,8 @@ settings:
   heatpipe_power: Heatpipe Power
   show_charging_power: Show Charging Power
   show_charging_power_desc: When charging, show the charging power instead of the system power
+  discover_ios_bluetooth: Discover iPhone & iPad via Bluetooth
+  discover_ios_bluetooth_desc: Briefly connect to nearby iPhones and iPads to read their battery when they aren't reachable over USB or Wi-Fi
   about: About
 
   version: Version

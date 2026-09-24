@@ -28,6 +28,7 @@ mod ext;
 mod history;
 mod local;
 mod menu;
+mod nearby;
 pub mod peripheral;
 mod tray_icon;
 mod util;
@@ -194,6 +195,7 @@ pub fn run() {
             setup_device_listener(app.app_handle().clone());
             setup_history_recorder(app.app_handle().clone());
             crate::peripheral::start_peripheral_scanner(app.app_handle().clone());
+            nearby::start_nearby_scanner(app.app_handle().clone());
 
             setup_traffic_light_positioner(app.main_window().unwrap());
 

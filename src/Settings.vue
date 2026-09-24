@@ -19,7 +19,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { open } from '@tauri-apps/plugin-shell'
-import { Activity, BadgeInfo, BatteryCharging, CircleDashed, ExternalLink, Eye, Gauge, Languages, Moon, Palette, RotateCw, Sun, SunMoon, Wallet } from 'lucide-vue-next'
+import { Activity, BadgeInfo, BatteryCharging, Bluetooth, CircleDashed, ExternalLink, Eye, Gauge, Languages, Moon, Palette, RotateCw, Sun, SunMoon, Wallet } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import { h, ref, watch } from 'vue'
 import { version } from '../package.json'
@@ -245,6 +245,14 @@ function SettingsSection(props: SettingsSectionProps) {
         :icon="BatteryCharging"
       >
         <Switch v-model:checked="preference.statusBarShowCharging" class="data-[state=checked]:bg-blue-500" />
+      </SettingsItem>
+
+      <SettingsItem
+        :name="$t('settings.discover_ios_bluetooth')"
+        :description="$t('settings.discover_ios_bluetooth_desc')"
+        :icon="Bluetooth"
+      >
+        <Switch v-model:checked="preference.discoverIosOverBluetooth" class="data-[state=checked]:bg-blue-500" />
       </SettingsItem>
     </div>
 

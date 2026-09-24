@@ -139,7 +139,11 @@ export type PeripheralType = "phone" | "tablet" | "watch" | "headset" | "mouse" 
 export type PeripheralUpdatedEvent = { peripherals: PeripheralInfo[] }
 export type PowerTickEvent = { data: NormalizedResource }
 export type PowerUpdatedEvent = string
-export type PreferenceEvent = { theme: Theme } | { animationsEnabled: boolean } | { updateInterval: number } | { language: string } | { statusBarItem: StatusBarItem } | { statusBarShowCharging: boolean }
+export type PreferenceEvent = { theme: Theme } | { animationsEnabled: boolean } | { updateInterval: number } | { language: string } | { statusBarItem: StatusBarItem } | { statusBarShowCharging: boolean } | 
+/**
+ * Read directly from the pinia store by `nearby.rs` each scan cycle.
+ */
+{ discoverIosOverBluetooth: boolean }
 export type StatusBarItem = "system" | "screen" | "heatpipe"
 export type Theme = "light" | "dark" | "system"
 export type WindowLoadedEvent = null

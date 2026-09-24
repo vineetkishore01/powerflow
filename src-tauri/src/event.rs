@@ -55,6 +55,8 @@ pub enum PreferenceEvent {
     Language(String),
     StatusBarItem(StatusBarItem),
     StatusBarShowCharging(bool),
+    /// Read directly from the pinia store by `nearby.rs` each scan cycle.
+    DiscoverIosOverBluetooth(bool),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Event, Type)]

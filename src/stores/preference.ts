@@ -9,6 +9,7 @@ export const usePreference = defineStore('preference', () => {
   const language = ref('en')
   const statusBarItem = ref<StatusBarItem>('system')
   const statusBarShowCharging = ref(true)
+  const discoverIosOverBluetooth = ref(false)
 
   return {
     theme,
@@ -17,6 +18,7 @@ export const usePreference = defineStore('preference', () => {
     language,
     statusBarItem,
     statusBarShowCharging,
+    discoverIosOverBluetooth,
   }
 }, {
   tauri: {
