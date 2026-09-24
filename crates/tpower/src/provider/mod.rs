@@ -139,6 +139,21 @@ impl Deref for NormalizedResource {
     }
 }
 
+fn real_capacity_from(io: &IORegistry) -> (i32, i32, i32) {
+    let bd = io.battery_data.as_ref();
+    let max_cap = bd
+        .and_then(|b| (b.full_charge_capacity > 0).then_some(b.full_charge_capacity))
+        .or_else(|| io.nominal_charge_capacity.filter(|&c| c > 0))
+        .unwrap_or(io.apple_raw_max_capacity);
+    let cur_cap = bd
+        .and_then(|b| (b.remaining_capacity > 0).then_some(b.remaining_capacity))
+        .unwrap_or(io.apple_raw_current_capacity);
+    let design_cap = bd
+        .and_then(|b| (b.design_capacity > 0).then_some(b.design_capacity))
+        .unwrap_or(io.design_capacity);
+    (max_cap, cur_cap, design_cap)
+}
+
 impl From<&IORegistry> for NormalizedResource {
     fn from(io: &IORegistry) -> Self {
         let (system_in, system_load, battery_power, adapter_power, efficiency_loss) =
@@ -151,7 +166,25 @@ impl From<&IORegistry> for NormalizedResource {
                     d.adapter_efficiency_loss as f32 / 1000.,
                 )
             } else {
-                Default::default()
+                // iOS/iPadOS remote device: calculate from InstantAmperage × Voltage
+                // InstantAmperage is in mA, Voltage is in mV
+                // Power (W) = mA × mV / 1,000,000
+                let battery_power =
+                    (io.instant_amperage.abs() as f32 * io.voltage as f32) / 1_000_000.0;
+
+                let adapter_watts = io.adapter_details.watts.unwrap_or(0) as f32;
+                let system_in = if io.is_charging {
+                    adapter_watts.max(battery_power)
+                } else {
+                    0.0
+                };
+                let system_load = if io.is_charging {
+                    (system_in - battery_power).max(0.0)
+                } else {
+                    battery_power
+                };
+
+                (system_in, system_load, battery_power, system_in, 0.0)
             };
 
         let time_remain = if io.time_remaining >= 65535 || io.time_remaining <= 0 {
@@ -160,10 +193,7 @@ impl From<&IORegistry> for NormalizedResource {
             Duration::from_secs(io.time_remaining as u64 * 60)
         };
         let is_charging = io.is_charging || io.adapter_details.watts.map_or(false, |w| w > 0);
-        let effective_max_capacity = io
-            .nominal_charge_capacity
-            .filter(|&c| c > 0)
-            .unwrap_or(io.apple_raw_max_capacity);
+        let (max_capacity, current_capacity, design_capacity) = real_capacity_from(io);
         let brightness_power = 0.0;
 
         Self {
@@ -177,10 +207,10 @@ impl From<&IORegistry> for NormalizedResource {
                 .clone()
                 .or_else(|| io.adapter_details.description.clone()),
             cycle_count: io.cycle_count,
-            max_capacity: effective_max_capacity,
-            design_capacity: io.design_capacity,
+            max_capacity,
+            design_capacity,
             not_charging_reason: io.not_charging_reason,
-            current_capacity: io.apple_raw_current_capacity,
+            current_capacity,
             data: NormalizedData {
                 system_in,
                 system_load,
@@ -190,8 +220,8 @@ impl From<&IORegistry> for NormalizedResource {
                 brightness_power,
                 heatpipe_power: 0.,
                 battery_level: io.current_capacity,
-                absolute_battery_level: if effective_max_capacity > 0 {
-                    io.apple_raw_current_capacity as f32 / effective_max_capacity as f32 * 100.
+                absolute_battery_level: if max_capacity > 0 {
+                    current_capacity as f32 / max_capacity as f32 * 100.
                 } else {
                     io.current_capacity as f32
                 },
@@ -273,10 +303,7 @@ impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
                 Duration::from_secs_f32(60.0 * smc.time_to_empty)
             }
         };
-        let effective_max_capacity = io
-            .nominal_charge_capacity
-            .filter(|&c| c > 0)
-            .unwrap_or(io.apple_raw_max_capacity);
+        let (max_capacity, current_capacity, design_capacity) = real_capacity_from(io);
         let brightness_power = if smc.brightness > 0.0 {
             smc.brightness
         } else {
@@ -322,10 +349,10 @@ impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
                 .clone()
                 .or_else(|| io.adapter_details.description.clone()),
             cycle_count,
-            max_capacity: effective_max_capacity,
-            design_capacity: io.design_capacity,
+            max_capacity,
+            design_capacity,
             not_charging_reason: io.not_charging_reason,
-            current_capacity: io.apple_raw_current_capacity,
+            current_capacity,
             data: NormalizedData {
                 system_in: smc.delivery_rate,
                 system_load: smc.system_total,
@@ -336,8 +363,8 @@ impl From<(&IORegistry, &SMCPowerData)> for NormalizedResource {
                 brightness_power,
                 heatpipe_power: smc.heatpipe,
                 battery_level: io.current_capacity,
-                absolute_battery_level: if effective_max_capacity > 0 {
-                    io.apple_raw_current_capacity as f32 / effective_max_capacity as f32 * 100.
+                absolute_battery_level: if max_capacity > 0 {
+                    current_capacity as f32 / max_capacity as f32 * 100.
                 } else {
                     io.current_capacity as f32
                 },

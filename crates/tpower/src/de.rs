@@ -91,6 +91,20 @@ with_repr! {
     #[out, serde(rename_all = "camelCase"), cfg_attr(feature = "specta", derive(specta::Type))]
     #[repr, serde(rename_all(deserialize = "PascalCase", serialize = "camelCase"))]
     #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+    pub struct BatteryData {
+        #[serde(default)]
+        pub full_charge_capacity: i32,
+        #[serde(default)]
+        pub remaining_capacity: i32,
+        #[serde(default)]
+        pub design_capacity: i32,
+        #[serde(default)]
+        pub nominal_charge_capacity: i32,
+    }
+
+    #[out, serde(rename_all = "camelCase"), cfg_attr(feature = "specta", derive(specta::Type))]
+    #[repr, serde(rename_all(deserialize = "PascalCase", serialize = "camelCase"), default)]
+    #[derive(Debug, Clone, Default, Deserialize, Serialize)]
     pub struct IORegistry {
         #[serde(default)]
         pub adapter_details: AdapterDetails,
@@ -98,6 +112,8 @@ with_repr! {
         pub charger_data: Option<ChargerData>,
         #[serde(default)]
         pub power_telemetry_data: Option<PowerTelemetryData>,
+        #[serde(default)]
+        pub battery_data: Option<BatteryData>,
         #[serde(default)]
         pub absolute_capacity: i32,
         #[serde(default)]
@@ -157,6 +173,12 @@ impl From<repr::IORegistry> for IORegistry {
                 system_load: d.system_load,
                 system_power_in: d.system_power_in,
                 system_voltage_in: d.system_voltage_in,
+            }),
+            battery_data: r.battery_data.map(|b| BatteryData {
+                full_charge_capacity: b.full_charge_capacity,
+                remaining_capacity: b.remaining_capacity,
+                design_capacity: b.design_capacity,
+                nominal_charge_capacity: b.nominal_charge_capacity,
             }),
             absolute_capacity: r.absolute_capacity,
             amperage: r.amperage,

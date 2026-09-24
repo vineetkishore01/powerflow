@@ -67,12 +67,39 @@ fn read_local_ioreg() -> tpower::de::IORegistry {
     }
 }
 
+fn emit_local_power_tick<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    smc: &SMCPowerData,
+    status_bar_item: &StatusBarItem,
+    show_charging: bool,
+) {
+    let io = read_local_ioreg();
+    let resource: NormalizedResource = (&io, smc).into();
+    if let Err(e) =
+        PowerUpdatedEvent::new_with(smc, resource.is_charging, status_bar_item, show_charging)
+            .emit(app)
+    {
+        log::warn!("failed to emit PowerUpdatedEvent: {e}");
+    }
+    if let Err(e) = (PowerTickEvent { data: resource }).emit(app) {
+        log::warn!("failed to emit PowerTickEvent: {e}");
+    }
+}
+
 pub fn start_sender<R: Runtime>(
     app: &impl Manager<R>,
     mut rx: mpsc::Receiver<SenderMessage>,
 ) -> async_runtime::JoinHandle<()> {
     let app = app.app_handle().clone();
-    let mut smc_conn = SMCConnection::new("AppleSMC").unwrap();
+    let mut smc_conn = match SMCConnection::new("AppleSMC") {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::error!("failed to open AppleSMC connection (kern={e}); local power sender disabled");
+            return async_runtime::spawn(async move {
+                while rx.recv().await.is_some() {}
+            });
+        }
+    };
 
     let mut timer = time::interval(Duration::from_millis(
         app.pinia()
@@ -93,52 +120,46 @@ pub fn start_sender<R: Runtime>(
             select! {
                 _ = timer.tick() => {
                     let smc = smc_conn.read_sensor();
-                    let io = read_local_ioreg();
-                    let resource: NormalizedResource = (&io, &smc).into();
-                    PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
-                        .emit(&app)
-                        .unwrap();
-                    PowerTickEvent {
-                        data: resource,
-                    }.emit(&app).unwrap();
+                    emit_local_power_tick(&app, &smc, &status_bar_item, show_charging);
                 }
                 Some(msg) = rx.recv() => match msg {
                     SenderMessage::ImmediateSend => {
                         let smc = smc_conn.read_sensor();
-                        let io = read_local_ioreg();
-                        let resource: NormalizedResource = (&io, &smc).into();
-                        PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
-                            .emit(&app)
-                            .unwrap();
-                        PowerTickEvent {
-                            data: resource,
-                        }.emit(&app).unwrap();
+                        emit_local_power_tick(&app, &smc, &status_bar_item, show_charging);
                     },
                     SenderMessage::ChangeInterval(interval) => {
-                        timer = time::interval(if interval < Duration::from_millis(500) {
-                            log::warn!("interval is too small, set to 500ms");
+                        let clamped = if interval < Duration::from_millis(500) {
+                            log::warn!("interval is too small, clamped to 500ms");
                             Duration::from_millis(500)
+                        } else if interval > Duration::from_secs(60) {
+                            log::warn!("interval is too large, clamped to 60s");
+                            Duration::from_secs(60)
                         } else {
                             interval
-                        });
+                        };
+                        timer = time::interval(clamped);
                     },
                     SenderMessage::ChangeStatusBarItem(item) => {
                         status_bar_item = item;
                         let smc = smc_conn.read_sensor();
                         let io = read_local_ioreg();
                         let resource: NormalizedResource = (&io, &smc).into();
-                        PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
+                        if let Err(e) = PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
                             .emit(&app)
-                            .unwrap();
+                        {
+                            log::warn!("failed to emit PowerUpdatedEvent: {e}");
+                        }
                     },
                     SenderMessage::StatusBarShowCharging(show) => {
                         show_charging = show;
                         let smc = smc_conn.read_sensor();
                         let io = read_local_ioreg();
                         let resource: NormalizedResource = (&io, &smc).into();
-                        PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
+                        if let Err(e) = PowerUpdatedEvent::new_with(&smc, resource.is_charging, &status_bar_item, show_charging)
                             .emit(&app)
-                            .unwrap();
+                        {
+                            log::warn!("failed to emit PowerUpdatedEvent: {e}");
+                        }
                     }
                 }
             }
@@ -156,7 +177,9 @@ pub fn setup_sender_with_events<R: Runtime>(app: &impl Manager<R>) {
     WindowLoadedEvent::listen(app, move |_| {
         let tx = tx.clone();
         async_runtime::spawn(async move {
-            tx.send(SenderMessage::ImmediateSend).await.unwrap();
+            if let Err(e) = tx.send(SenderMessage::ImmediateSend).await {
+                log::warn!("failed to send ImmediateSend: {e}");
+            }
         });
     });
 
@@ -178,7 +201,9 @@ pub fn setup_sender_with_events<R: Runtime>(app: &impl Manager<R>) {
         } {
             let tx = tx.clone();
             async_runtime::spawn(async move {
-                tx.send(msg).await.unwrap();
+                if let Err(e) = tx.send(msg).await {
+                    log::warn!("failed to send SenderMessage: {e}");
+                }
             });
         }
     });
