@@ -26,23 +26,23 @@ unsafe impl Send for ServiceConnection {}
 unsafe impl Sync for ServiceConnection {}
 
 impl ServiceConnection {
-    fn start(device: AMDeviceRef, service_name: &str) -> Self {
+    pub fn start(device: AMDeviceRef, service_name: &str) -> Result<Self, i32> {
         unsafe {
             let service_name = cfstr!(service_name);
-            let service_ptr: AMDServiceConnectionRef = null_mut();
+            let mut service_ptr: AMDServiceConnectionRef = null_mut();
 
             let result = AMDeviceSecureStartService(
                 device,
                 service_name.as_concrete_TypeRef(),
                 null_mut(),
-                &service_ptr,
+                &mut service_ptr,
             );
 
             if result != 0 {
-                panic!("couldn't start service {}", result);
+                return Err(result);
             }
 
-            ServiceConnection(service_ptr)
+            Ok(ServiceConnection(service_ptr))
         }
     }
 
@@ -188,7 +188,7 @@ impl Device {
         Ok(())
     }
 
-    pub fn start_service(&self, service_name: &str) -> ServiceConnection {
+    pub fn start_service(&self, service_name: &str) -> Result<ServiceConnection, i32> {
         ServiceConnection::start(self.device, service_name)
     }
 }

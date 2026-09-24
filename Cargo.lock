@@ -3675,12 +3675,14 @@ dependencies = [
 
 [[package]]
 name = "powerflow"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "bincode",
  "chrono",
  "cocoa 0.26.0",
+ "core-foundation 0.10.0",
  "derive_more 1.0.0",
+ "io-kit-sys",
  "log",
  "objc",
  "objc2",

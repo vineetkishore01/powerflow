@@ -90,10 +90,26 @@ pub fn start_device_sender(handle: AppHandle) -> async_runtime::JoinHandle<()> {
                 _ = timer.tick() => {
                     for (device, conn) in devices.iter() {
                         match get_device_ioreg(conn) {
-                            Ok(res) => DevicePowerTickEvent {
-                                udid: device.udid.clone(),
-                                data: NormalizedResource::from(&res),
-                            }.emit(&handle).unwrap(),
+                            Ok(res) => {
+                                let norm = NormalizedResource::from(&res);
+                                let _ = DevicePowerTickEvent {
+                                    udid: device.udid.clone(),
+                                    data: norm.clone(),
+                                }.emit(&handle);
+
+                                if let Some(p_state) = handle.try_state::<crate::peripheral::PeripheralState>() {
+                                    if let Ok(mut guard) = p_state.ios_cache.lock() {
+                                        guard.insert(
+                                            device.udid.clone(),
+                                            (
+                                                device.name(),
+                                                norm.battery_level as u8,
+                                                norm.battery_power > 0.0 || norm.is_charging,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
                             Err(err) => {
                                 log::error!("Failed to get IORegistry: {err}");
                             }
@@ -103,29 +119,39 @@ pub fn start_device_sender(handle: AppHandle) -> async_runtime::JoinHandle<()> {
                 Some(DeviceMessage { device, action }) = rx.recv() => {
                     match action {
                         Action::Attached => {
-                            // unwrap pair
-                            device.prepare_device().unwrap();
-                            let conn = device.start_service("com.apple.mobile.diagnostics_relay");
-
-                            DeviceEvent {
-                                udid: device.udid.clone(),
-                                // must call `device.name()` after `device.prepare_device()`
-                                // or name will be empty causing panic
-                                name: device.name(),
-                                interface: device.interface_type,
-                                action,
-                            }.emit(&handle).unwrap();
-
-                            devices.insert(device, conn);
+                            if let Err(e) = device.prepare_device() {
+                                log::warn!("Failed to prepare iOS device {}: {:?}", device.udid, e);
+                                continue;
+                            }
+                            match device.start_service("com.apple.mobile.diagnostics_relay") {
+                                Ok(conn) => {
+                                    let name = device.name();
+                                    let _ = DeviceEvent {
+                                        udid: device.udid.clone(),
+                                        name,
+                                        interface: device.interface_type,
+                                        action,
+                                    }.emit(&handle);
+                                    devices.insert(device, conn);
+                                }
+                                Err(err) => {
+                                    log::warn!("Failed to start diagnostics_relay for {}: {}", device.udid, err);
+                                }
+                            }
                         },
                         Action::Detached => {
                             log::debug!("Device detached: {}", device.udid);
-                            DeviceEvent {
+                            if let Some(p_state) = handle.try_state::<crate::peripheral::PeripheralState>() {
+                                if let Ok(mut guard) = p_state.ios_cache.lock() {
+                                    guard.remove(&device.udid);
+                                }
+                            }
+                            let _ = DeviceEvent {
                                 udid: device.udid.clone(),
                                 name: String::new(),
                                 interface: device.interface_type,
                                 action,
-                            }.emit(&handle).unwrap();
+                            }.emit(&handle);
                             devices.remove(&device);
                         },
                         _ => ()

@@ -1,6 +1,6 @@
 [package]
 name = "powerflow"
-version = "0.2.7"
+version = "0.2.8"
 description = "Monitoring power usage of mac and iOS devices"
 authors = [ "Samuel Lyon" ]
 edition = "2021"
@@ -57,6 +57,8 @@ strum = "0.26.3"
 objc2 = "0.5.2"
 objc2-app-kit = "0.2.2"
 objc2-foundation = "0.2.2"
+core-foundation = "0.10.0"
+io-kit-sys = "0.4.1"
 log = "0.4.22"
 thiserror = "2.0.9"
 scopefn = "0.0.2"

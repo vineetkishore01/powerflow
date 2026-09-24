@@ -46,6 +46,15 @@ async deleteHistoryById(id: number) : Promise<Result<number, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getPeripherals() : Promise<PeripheralInfo[]> {
+    return await TAURI_INVOKE("get_peripherals");
+},
+async refreshPeripherals() : Promise<PeripheralInfo[]> {
+    return await TAURI_INVOKE("refresh_peripherals");
+},
+async setPopoverHeight(height: number) : Promise<void> {
+    await TAURI_INVOKE("set_popover_height", { height });
 }
 }
 
@@ -56,6 +65,7 @@ export const events = __makeEvents__<{
 deviceEvent: DeviceEvent,
 devicePowerTickEvent: DevicePowerTickEvent,
 historyRecordedEvent: HistoryRecordedEvent,
+peripheralUpdatedEvent: PeripheralUpdatedEvent,
 powerTickEvent: PowerTickEvent,
 powerUpdatedEvent: PowerUpdatedEvent,
 preferenceEvent: PreferenceEvent,
@@ -64,6 +74,7 @@ windowLoadedEvent: WindowLoadedEvent
 deviceEvent: "device-event",
 devicePowerTickEvent: "device-power-tick-event",
 historyRecordedEvent: "history-recorded-event",
+peripheralUpdatedEvent: "peripheral-updated-event",
 powerTickEvent: "power-tick-event",
 powerUpdatedEvent: "power-updated-event",
 preferenceEvent: "preference-event",
@@ -97,8 +108,9 @@ export type Action =
  * Unsubcribing and resubscribing may recover the notification system.
  */
 "NotificationStopped" | "Paired"
+export type BatteryCell = { name: string; level: number; isCharging: boolean }
 export type ChargingHistory = { id: number; fromLevel: number; endLevel: number; chargingTime: number; timestamp: number; name: string; udid: string; isRemote: number; adapterName: string }
-export type ChargingHistoryDetail = { avg: NormalizedData; peak: NormalizedData; curve: NormalizedResource[]; raw: string[] }
+export type ChargingHistoryDetail = { avg: NormalizedData; peak: NormalizedData; curve: NormalizedResource[]; raw?: string[] }
 export type DeviceEvent = { udid: string; name: string; interface: InterfaceType; action: Action }
 export type DevicePowerTickEvent = { udid: string; data: NormalizedResource }
 export type Duration = { secs: number; nanos: number }
@@ -112,7 +124,7 @@ brightnessPower: number;
 /**
  * 0 if not available
  */
-heatpipePower: number; batteryLevel: number; absoluteBatteryLevel: number; temperature: number; adapterWatts: number; adapterVoltage: number; adapterAmperage: number }
+heatpipePower: number; batteryLevel: number; absoluteBatteryLevel: number; temperature: number; adapterWatts: number; adapterVoltage: number; adapterAmperage: number; cpuPower?: number; gpuPower?: number; batteryVoltage?: number; batteryAmperage?: number }
 export type NormalizedResource = ({ systemIn: number; systemLoad: number; batteryPower: number; adapterPower: number; efficiencyLoss: number; 
 /**
  * 0 if not available
@@ -121,7 +133,10 @@ brightnessPower: number;
 /**
  * 0 if not available
  */
-heatpipePower: number; batteryLevel: number; absoluteBatteryLevel: number; temperature: number; adapterWatts: number; adapterVoltage: number; adapterAmperage: number }) & { isLocal: boolean; isCharging: boolean; timeRemain: Duration; lastUpdate: number; adapterName: string | null; cycleCount: number; currentCapacity: number; maxCapacity: number; designCapacity?: number; notChargingReason?: number | null; chargeLimit?: number | null }
+heatpipePower: number; batteryLevel: number; absoluteBatteryLevel: number; temperature: number; adapterWatts: number; adapterVoltage: number; adapterAmperage: number; cpuPower?: number; gpuPower?: number; batteryVoltage?: number; batteryAmperage?: number }) & { isLocal: boolean; isCharging: boolean; timeRemain: Duration; lastUpdate: number; adapterName: string | null; cycleCount: number; currentCapacity: number; maxCapacity: number; designCapacity?: number; notChargingReason: number | null; chargeLimit?: number | null }
+export type PeripheralInfo = { id: string; name: string; peripheralType: PeripheralType; batteryLevel: number; isCharging: boolean; cells: BatteryCell[]; via: string | null; lastUpdated: number }
+export type PeripheralType = "phone" | "tablet" | "watch" | "headset" | "mouse" | "keyboard" | "trackpad" | "gamepad" | "other"
+export type PeripheralUpdatedEvent = { peripherals: PeripheralInfo[] }
 export type PowerTickEvent = { data: NormalizedResource }
 export type PowerUpdatedEvent = string
 export type PreferenceEvent = { theme: Theme } | { animationsEnabled: boolean } | { updateInterval: number } | { language: string } | { statusBarItem: StatusBarItem } | { statusBarShowCharging: boolean }

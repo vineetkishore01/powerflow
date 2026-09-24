@@ -17,6 +17,7 @@ use sqlx::{Pool, Sqlite};
 use tauri::{ActivationPolicy, AppHandle, Manager, RunEvent, State, Window, WindowEvent};
 use tauri_specta::{collect_commands, collect_events};
 use tpower::ffi::InterfaceType;
+use tauri_plugin_nspopover::AppExt;
 use tray_icon::setup_tray_icon;
 use util::setup_traffic_light_positioner;
 
@@ -27,6 +28,7 @@ mod ext;
 mod history;
 mod local;
 mod menu;
+pub mod peripheral;
 mod tray_icon;
 mod util;
 
@@ -38,7 +40,7 @@ fn open_app(app: AppHandle) {
     main.set_focus().unwrap();
     app.set_activation_policy(ActivationPolicy::Regular)
         .unwrap();
-    app.popover_window().unwrap().hide().unwrap();
+    app.hide_popover();
 }
 
 #[tauri::command]
@@ -131,7 +133,10 @@ pub fn create_specta() -> tauri_specta::Builder {
             switch_theme,
             get_detail_by_id,
             get_all_charging_history,
-            delete_history_by_id
+            delete_history_by_id,
+            crate::peripheral::get_peripherals,
+            crate::peripheral::refresh_peripherals,
+            crate::peripheral::set_popover_height
         ])
         .events(collect_events![
             DeviceEvent,
@@ -141,6 +146,7 @@ pub fn create_specta() -> tauri_specta::Builder {
             PowerUpdatedEvent,
             WindowLoadedEvent,
             HistoryRecordedEvent,
+            crate::peripheral::PeripheralUpdatedEvent,
         ]);
 
     #[cfg(debug_assertions)]
@@ -174,6 +180,7 @@ pub fn run() {
         .plugin(tauri_plugin_nspopover::init())
         .invoke_handler(specta.invoke_handler())
         .manage(DeviceState::default())
+        .manage(crate::peripheral::PeripheralState::default())
         .menu(setup_menu)
         .on_window_event(handle_window_event)
         .setup(move |app| {
@@ -186,6 +193,7 @@ pub fn run() {
             start_device_sender(app.app_handle().clone());
             setup_device_listener(app.app_handle().clone());
             setup_history_recorder(app.app_handle().clone());
+            crate::peripheral::start_peripheral_scanner(app.app_handle().clone());
 
             setup_traffic_light_positioner(app.main_window().unwrap());
 
@@ -228,5 +236,15 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
             }
             _ => (),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_export_bindings() {
+        create_specta();
     }
 }
