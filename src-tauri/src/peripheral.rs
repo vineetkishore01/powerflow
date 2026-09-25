@@ -574,7 +574,7 @@ pub fn calculate_popover_height(device_count: usize) -> f64 {
     }
 }
 
-pub fn sync_popover_height_for_state<R: Runtime>(app: &AppHandle<R>, animate: bool) {
+pub fn sync_popover_height_for_state<R: Runtime>(app: &AppHandle<R>) {
     let count = if let Some(state) = app.try_state::<PeripheralState>() {
         if let Ok(guard) = state.peripherals.lock() {
             guard.len()
@@ -593,7 +593,7 @@ pub fn sync_popover_height_for_state<R: Runtime>(app: &AppHandle<R>, animate: bo
             return;
         }
         unsafe {
-            popover.setAnimates(animate);
+            popover.setAnimates(true);
             popover.setContentSize(NSSize::new(352.0, h_val));
         }
     };
@@ -612,20 +612,15 @@ pub fn set_popover_height(app: AppHandle, height: f64) {
         return;
     }
     let h = height.ceil();
-    let is_shown = app.is_popover_shown();
     let app_clone = app.clone();
     let apply = move |h_val: f64| {
         let popover = app_clone.ns_popover();
         let current_size = unsafe { popover.contentSize() };
-        let diff = (current_size.height - h_val).abs();
-        if diff < 1.0 {
+        if (current_size.height - h_val).abs() < 1.0 {
             return;
         }
         unsafe {
-            // Only animate smoothly if the popover is already actively shown on screen
-            // and the adjustment is small. If it's a large jump or not yet shown,
-            // don't animate to prevent visible lag or ballooning.
-            popover.setAnimates(is_shown && diff < 20.0);
+            popover.setAnimates(true);
             popover.setContentSize(NSSize::new(352.0, h_val));
         }
     };

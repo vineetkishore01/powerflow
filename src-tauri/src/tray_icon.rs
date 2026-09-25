@@ -3,7 +3,7 @@ use std::process::{self, Command};
 use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    ActivationPolicy, Emitter, Manager, Runtime,
+    ActivationPolicy, Manager, Runtime,
 };
 use tauri_plugin_nspopover::{AppExt, WindowExt as _};
 use tauri_specta::Event;
@@ -120,9 +120,8 @@ pub fn setup_tray_icon<R: Runtime>(app: &impl Manager<R>) -> tauri::Result<()> {
                 if handle.is_popover_shown() {
                     handle.hide_popover();
                 } else {
-                    crate::peripheral::sync_popover_height_for_state(handle, false);
+                    crate::peripheral::sync_popover_height_for_state(handle);
                     handle.show_popover();
-                    let _ = handle.emit("popover-opened", ());
                 }
             }
             TrayIconEvent::Click {
@@ -140,6 +139,9 @@ pub fn setup_tray_icon<R: Runtime>(app: &impl Manager<R>) -> tauri::Result<()> {
     });
 
     app.popover_window().unwrap().to_popover();
+    unsafe {
+        app.app_handle().ns_popover().setAnimates(true);
+    }
 
     Ok(())
 }
