@@ -33,7 +33,7 @@ function handleCardClick() {
         <PowerStatusFooter />
       </CardContent>
     </div>
-    <div :class="isPopover ? 'px-6 pb-2' : 'px-6 pb-4'">
+    <div class="px-6 pb-4">
       <PeripheralList />
     </div>
   </Component>

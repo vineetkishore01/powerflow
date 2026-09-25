@@ -17,10 +17,10 @@ use io_kit_sys::{
     IOIteratorNext, IOObjectRelease, IORegistryEntryCreateCFProperties,
     IOServiceGetMatchingServices, IOServiceMatching, ret::kIOReturnSuccess,
 };
-use objc2_foundation::NSSize;
+use objc2_foundation::{is_main_thread, NSSize};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{async_runtime, AppHandle, Manager};
+use tauri::{async_runtime, AppHandle, Manager, Runtime};
 use tauri_plugin_nspopover::AppExt;
 use tauri_specta::Event;
 use tokio::time;
@@ -564,6 +564,47 @@ pub fn refresh_peripherals(app: AppHandle) -> Vec<PeripheralInfo> {
     fresh
 }
 
+pub fn calculate_popover_height(device_count: usize) -> f64 {
+    match device_count {
+        0 => 224.0,
+        1..=2 => 285.0,
+        3..=4 => 340.0,
+        5..=6 => 395.0,
+        _ => 450.0,
+    }
+}
+
+pub fn sync_popover_height_for_state<R: Runtime>(app: &AppHandle<R>, animate: bool) {
+    let count = if let Some(state) = app.try_state::<PeripheralState>() {
+        if let Ok(guard) = state.peripherals.lock() {
+            guard.len()
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let h = calculate_popover_height(count);
+    let app_clone = app.clone();
+    let apply = move |h_val: f64| {
+        let popover = app_clone.ns_popover();
+        let current_size = unsafe { popover.contentSize() };
+        if (current_size.height - h_val).abs() < 1.0 {
+            return;
+        }
+        unsafe {
+            popover.setAnimates(animate);
+            popover.setContentSize(NSSize::new(352.0, h_val));
+        }
+    };
+
+    if is_main_thread() {
+        apply(h);
+    } else {
+        let _ = app.run_on_main_thread(move || apply(h));
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_popover_height(app: AppHandle, height: f64) {
@@ -571,18 +612,29 @@ pub fn set_popover_height(app: AppHandle, height: f64) {
         return;
     }
     let h = height.ceil();
+    let is_shown = app.is_popover_shown();
     let app_clone = app.clone();
-    let _ = app.run_on_main_thread(move || {
+    let apply = move |h_val: f64| {
         let popover = app_clone.ns_popover();
         let current_size = unsafe { popover.contentSize() };
-        if (current_size.height - h).abs() < 1.0 {
+        let diff = (current_size.height - h_val).abs();
+        if diff < 1.0 {
             return;
         }
         unsafe {
-            popover.setAnimates(true);
-            popover.setContentSize(NSSize::new(352.0, h));
+            // Only animate smoothly if the popover is already actively shown on screen
+            // and the adjustment is small. If it's a large jump or not yet shown,
+            // don't animate to prevent visible lag or ballooning.
+            popover.setAnimates(is_shown && diff < 20.0);
+            popover.setContentSize(NSSize::new(352.0, h_val));
         }
-    });
+    };
+
+    if is_main_thread() {
+        apply(h);
+    } else {
+        let _ = app.run_on_main_thread(move || apply(h));
+    }
 }
 
 #[cfg(test)]
